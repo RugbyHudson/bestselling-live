@@ -1,0 +1,64 @@
+name: Rebuild and deploy
+
+# Runs the site generator on a schedule, commits any changes, and deploys
+# to Cloudflare Pages. Also runs on every push to main.
+#
+# Required repo secrets:
+#   CLOUDFLARE_API_TOKEN  - Cloudflare API token with Account.Cloudflare Pages:Edit
+#   CLOUDFLARE_ACCOUNT_ID - Cloudflare account ID (already known: 93888714538b25a28aa34c324187164f)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Every 3 hours, on the hour. Adjust cadence here.
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: rebuild
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build deps
+        run: pip install pillow
+
+      - name: Regenerate site
+        env:
+          AMAZON_AFFILIATE_TAG: bestsellin092-20
+        run: python generate.py
+
+      - name: Commit regenerated files (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: scheduled rebuild $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name=bestselling-live --branch=main --commit-dirty=true
